@@ -2,115 +2,107 @@ from flask import Flask, request
 import datetime
 import random
 import re
+import logging
 
-# --- Dummy Database & Helper Functions (Replace with real DB and APIs) ---
+# --- Logging Configuration ---
+# Sets up basic logging to the console.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+
+# --- Dummy Database & Data Structures (Replace with real DB and APIs) ---
 
 # A simple dictionary to act as our in-memory database.
-# In production, use a robust database like PostgreSQL or MySQL.
-registrations_db = {
-    "GHA-2025-0000001": {
-        "baby_name": "Test Baby", "dob": "01/01/2025", "sex": "Male",
-        "mother_name": "Test Mother", "status": "Provisionally Registered"
-    }
+registrations_db = {}
+
+# Data structure for Ghana's regions and districts with their codes.
+REGIONS_DISTRICTS = {
+    "1": {
+        "name": "Greater Accra", "code": "01",
+        "districts": [
+            {"name": "Accra Metropolis", "code": "027"},
+            {"name": "Tema Metropolis", "code": "001"},
+            {"name": "Ga East Municipal", "code": "024"},
+        ]
+    },
+    "2": {
+        "name": "Ashanti", "code": "02",
+        "districts": [
+            {"name": "Kumasi Metropolis", "code": "101"},
+            {"name": "Obuasi Municipal", "code": "102"},
+            {"name": "Asante Akim Central", "code": "105"},
+        ]
+    },
+    "3": {"name": "Western", "code": "03", "districts": [{"name": "Sekondi-Takoradi Metropolis", "code": "211"}, {"name": "Tarkwa-Nsuaem Municipal", "code": "203"},]},
+    "4": {"name": "Central", "code": "04", "districts": [{"name": "Cape Coast Metropolis", "code": "301"}]},
+    "5": {"name": "Eastern", "code": "05", "districts": [{"name": "New Juaben South", "code": "401"}]},
+    "6": {"name": "Volta", "code": "06", "districts": [{"name": "Ho Municipal", "code": "501"}]},
+    "7": {"name": "Northern", "code": "07", "districts": [{"name": "Tamale Metropolis", "code": "601"}]},
+    "8": {"name": "Upper East", "code": "08", "districts": [{"name": "Bolgatanga Municipal", "code": "701"}]},
+    "9": {"name": "Upper West", "code": "09", "districts": [{"name": "Wa Municipal", "code": "801"}]},
+    "10": {"name": "Bono", "code": "10", "districts": [{"name": "Sunyani Municipal", "code": "901"}]},
+    "11": {"name": "Bono East", "code": "11", "districts": [{"name": "Techiman Municipal", "code": "911"}]},
+    "12": {"name": "Ahafo", "code": "12", "districts": [{"name": "Asunafo North", "code": "921"}]},
+    "13": {"name": "Western North", "code": "13", "districts": [{"name": "Sefwi Wiawso", "code": "231"}]},
+    "14": {"name": "Oti", "code": "14", "districts": [{"name": "Krachi East", "code": "521"}]},
+    "15": {"name": "North East", "code": "15", "districts": [{"name": "East Mamprusi", "code": "621"}]},
+    "16": {"name": "Savannah", "code": "16", "districts": [{"name": "West Gonja", "code": "631"}]},
 }
+
 
 # --- Input Validation Functions ---
 
-def validate_region_selection(region_input):
-    """Validates region selection (1-16)"""
-    try:
-        region_num = int(region_input)
-        return 1 <= region_num <= 16
-    except (ValueError, TypeError):
-        return False
-
-def validate_district_code(district_code):
-    """Validates 3-digit district code"""
-    if not district_code or len(district_code) != 3:
-        return False
-    return district_code.isdigit()
+def validate_name(name):
+    if name == '0': return True
+    if not name: return False
+    clean_name = name.strip()
+    if not (2 <= len(clean_name) <= 50): return False
+    return bool(re.match(r"^[a-zA-Z\s'-]+$", clean_name))
 
 def validate_date_of_birth(dob):
-    """Validates date format DDMMYYYY and checks if it's a reasonable date"""
-    if not dob or len(dob) != 8:
-        return False
-    
-    if not dob.isdigit():
-        return False
-    
+    if not dob or len(dob) != 8 or not dob.isdigit(): return False
     try:
-        day = int(dob[:2])
-        month = int(dob[2:4])
-        year = int(dob[4:8])
-        
+        day, month, year = int(dob[:2]), int(dob[2:4]), int(dob[4:])
         current_year = datetime.datetime.now().year
-        if not (1 <= day <= 31 and 1 <= month <= 12 and (current_year - 10) <= year <= current_year):
-            return False
-            
+        if not (1 <= day <= 31 and 1 <= month <= 12 and (current_year - 10) <= year <= current_year): return False
         datetime.datetime(year, month, day)
         return True
-    except (ValueError, TypeError):
-        return False
+    except (ValueError, TypeError): return False
 
 def validate_sex_selection(sex_input):
-    """Validates sex selection (1 or 2)"""
     return sex_input in ['1', '2']
 
-def validate_name(name):
-    """Validates name input - must be alphabetic and reasonable length"""
-    if not name:
-        return False
-    clean_name = name.strip()
-    if not (2 <= len(clean_name) <= 50):
-        return False
-    pattern = r"^[a-zA-Z\s'-]+$"
-    return bool(re.match(pattern, clean_name))
-
 def validate_nin(nin):
-    """Validates 15-character Ghana Card Number format (GHA-123456789-0)"""
-    if not nin:
-        return False
-    pattern = r'^GHA-\d{9}-[\dA-Z]$'
-    return bool(re.match(pattern, nin.upper()))
+    if not nin: return False
+    return bool(re.match(r'^GHA-\d{9}-[\dA-Z]$', nin.upper()))
 
-def validate_health_worker_id(hw_id):
-    """Validates 6-digit health worker ID"""
-    if not hw_id or len(hw_id) != 6:
-        return False
-    return hw_id.isdigit()
-
-def validate_phone_number(phone):
-    """Validates 10-digit phone number format"""
-    if not phone:
-        return False
-    clean_phone = ''.join(filter(str.isdigit, phone))
-    return len(clean_phone) == 10 and clean_phone.startswith('0')
+def validate_optional_nin(nin):
+    if nin == '0': return True
+    return validate_nin(nin)
 
 def validate_ubrn(ubrn):
-    """Validates UBRN format"""
-    if not ubrn:
-        return False
-    pattern = r'^GHA-\d{2}-\d{3}-\d{5}-\d{4}-[\dX]$'
-    return bool(re.match(pattern, ubrn.upper()))
+    if not ubrn: return False
+    return bool(re.match(r'^GHA-\d{2}-\d{3}-\d{5}-\d{4}-[\dX]$', ubrn.upper()))
+
 
 # --- UBRN Generation & DB Functions ---
 
 def get_next_sequence_for_district_day(region_code, district_code, julian_day):
-    """ *** SIMULATED FUNCTION *** """
-    return random.randint(1, 5)
+    return random.randint(1, 99)
 
 def calculate_check_digit(number_string):
-    """Calculates a check digit using the Modulo 11 algorithm."""
     digits = [int(d) for d in number_string if d.isdigit()]
     if not digits: return '0'
-    weights = list(range(len(digits), 0, -1))
+    weights = [7, 6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
     s = sum(digit * weights[i] for i, digit in enumerate(digits))
     remainder = s % 11
     check_digit = (11 - remainder) % 11
     return str(check_digit) if check_digit < 10 else 'X'
 
 def generate_robust_ubrn(region_code, district_code):
-    """Generates a structured, information-rich, and highly unique UBRN."""
     now = datetime.datetime.now()
     year_short, julian_day = now.strftime('%y'), now.strftime('%j')
     sequence = get_next_sequence_for_district_day(region_code, district_code, julian_day)
@@ -119,22 +111,24 @@ def generate_robust_ubrn(region_code, district_code):
     check_digit = calculate_check_digit(base_ubrn_numeric_part)
     return f"GHA-{region_code}-{district_code}-{year_short}{julian_day}-{sequence_str}-{check_digit}"
 
-def save_registration(details, region_code, district_code):
+def save_registration(details):
     """Saves registration details to the DB and returns the UBRN."""
-    ubrn = generate_robust_ubrn(region_code, district_code)
+    ubrn = generate_robust_ubrn(details["region_code"], details["district_code"])
     details["ubrn"] = ubrn
     registrations_db[ubrn] = details
-    print("="*20 + f"\nDATABASE: Saved record with UBRN {ubrn}\nDetails: {details}\n" + "="*20)
+    logging.info(f"DATABASE: Saved record with UBRN {ubrn}. Details: {details}")
     return ubrn
 
 def find_registration_by_ubrn(ubrn):
     """Finds a registration by UBRN from the DB."""
+    logging.info(f"DATABASE: Searching for UBRN '{ubrn.upper()}'")
     return registrations_db.get(ubrn.upper())
 
 def send_sms(phone_number, message):
     """Simulates sending an SMS via an API gateway."""
-    print("="*20 + f"\nSMS GATEWAY: Sending SMS to {phone_number}:\n{message}\n" + "="*20)
+    logging.info(f"SMS GATEWAY: Sending SMS to {phone_number}. Message: '{message}'")
     return True
+
 
 # --- Main Flask Application ---
 
@@ -142,217 +136,107 @@ app = Flask(__name__)
 
 @app.route('/callback', methods=['POST'])
 def ussd_callback():
+    session_id = request.values.get("sessionId", None)
+    phone_number = request.values.get("phoneNumber", None)
+    text = request.values.get("text", "").strip()
+    
+    # Log every incoming request for traceability
+    logging.info(f"Request received - SessionID: {session_id}, Phone: {phone_number}, Text: '{text}'")
+
+    response = ""
     try:
-        session_id = request.values.get("sessionId", None)
-        phone_number = request.values.get("phoneNumber", None)
-        text = request.values.get("text", "").strip()
-        
-        response = ""
         inputs = [inp.strip()[:100] for inp in text.split('*')]
 
         # ================== MAIN MENU ==================
         if text == "":
-            response = "CON Welcome to the Ghana e-Birth Service:\n1. Register a New Birth\n2. Verify Registration\n3. Help"
+            response = "CON Welcome to the Ghana e-Birth Service:\n1. Register a New Birth\n2. Verify Registration Status"
 
         # ================== REGISTRATION FLOW (Option 1) ==================
         elif inputs[0] == "1":
             if len(inputs) == 1:
-                response = "CON You are registering as:\n1. Parent/Guardian\n2. Health Worker"
-            
-            # --- PATH 1.1: Parent/Guardian Flow ---
-            elif inputs[1] == "1":
-                if len(inputs) == 2:
-                    region_list = "1. G. Accra\n2. Ashanti\n3. Western\n4. Central\n5. Eastern\n6. Volta\n7. Northern\n8. U. East\n9. U. West\n10. Bono\n11. Bono E\n12. Ahafo\n13. W. North\n14. Oti\n15. N. East\n16. Savannah"
-                    response = f"CON Select the region of birth:\n{region_list}"
-                elif len(inputs) == 3:
-                    if not validate_region_selection(inputs[2]): response = "END Invalid region. Please dial code to start again."
-                    else: response = "CON Enter your 3-digit District Code (e.g., 027 for Accra Metro)"
-                elif len(inputs) == 4:
-                    if not validate_district_code(inputs[3]): response = "END Invalid district code. Please dial code to start again."
-                    else: response = "CON Enter baby's Date of Birth (DDMMYYYY)"
-                elif len(inputs) == 5:
-                    if not validate_date_of_birth(inputs[4]): response = "END Invalid date. Please dial code to start again."
-                    else: response = "CON Select baby's sex:\n1. Male\n2. Female"
-                elif len(inputs) == 6:
-                    if not validate_sex_selection(inputs[5]): response = "END Invalid sex selection. Please dial code to start again."
-                    else: response = "CON Enter baby's First Name(s)"
-                elif len(inputs) == 7:
-                    if not validate_name(inputs[6]): response = "END Invalid first name. Please dial code to start again."
-                    else: response = "CON Enter baby's Surname"
-                elif len(inputs) == 8:
-                    if not validate_name(inputs[7]): response = "END Invalid surname. Please dial code to start again."
-                    else: response = "CON Enter Mother's Full Name (as on Ghana Card)"
-                elif len(inputs) == 9:
-                    if not validate_name(inputs[8]): response = "END Invalid mother's name. Please dial code to start again."
-                    else: response = "CON Enter Mother's Ghana Card Number (e.g. GHA-123456789-0)"
-                elif len(inputs) == 10:
-                    if not validate_nin(inputs[9]): response = "END Invalid mother's NIN. Please dial code to start again."
-                    else: response = "CON Add Father's Details?\n1. Yes\n2. No"
-                
-                # --- Flow diverges here based on Father Details selection ---
-                elif len(inputs) >= 11:
-                    add_father_choice = inputs[10]
-                    if add_father_choice not in ['1', '2']:
-                        response = "END Invalid choice for father's details. Please start again."
-                    # --- PATH 1.1.1: NO Father Details ---
-                    elif add_father_choice == '2':
-                        if len(inputs) == 11: # Show confirmation
-                            region_code, district_code, dob_raw, sex_code, first_name, surname, mother_name = inputs[2:9]
-                            dob = f"{dob_raw[0:2]}/{dob_raw[2:4]}/{dob_raw[4:8]}"
-                            sex = "Male" if sex_code == "1" else "Female"
-                            summary = f"Please Confirm:\nDistrict: {district_code}\nName: {first_name} {surname}\nDOB: {dob}\nSex: {sex}\nMother: {mother_name}\n\n1. Confirm & Submit\n2. Cancel"
-                            response = f"CON {summary}"
-                        elif len(inputs) == 12: # Process submission
-                            if inputs[11] == '1':
-                                region_code_fmt = f"{int(inputs[2]):02d}"
-                                details = {
-                                    "baby_name": f"{inputs[6]} {inputs[7]}", "dob": f"{inputs[4][0:2]}/{inputs[4][2:4]}/{inputs[4][4:8]}",
-                                    "sex": "Male" if inputs[5] == "1" else "Female", "mother_name": inputs[8], "mother_nin": inputs[9],
-                                    "district_code": inputs[3], "region_code": region_code_fmt, "status": "Provisionally Registered"
-                                }
-                                ubrn = save_registration(details, region_code_fmt, inputs[3])
-                                sms_message = f"Congratulations! The birth of {details['baby_name']} is registered. Your UBRN is {ubrn}. Keep this safe."
-                                send_sms(phone_number, sms_message)
-                                response = "END Thank you! You will receive an SMS with the UBRN shortly."
-                            else:
-                                response = "END Registration cancelled. Thank you."
+                response = "CON Enter Child's Full Name (or enter 0 to skip)"
+            elif len(inputs) == 2:
+                if not validate_name(inputs[1]):
+                    response = "END Invalid Name. Please enter alphabetic characters only."
+                else:
+                    response = "CON Enter Date of Birth (DDMMYYYY)"
+            elif len(inputs) == 3:
+                if not validate_date_of_birth(inputs[2]):
+                    response = "END Invalid Date of Birth. Format must be DDMMYYYY and a valid date."
+                else:
+                    response = "CON Select Sex:\n1. Male\n2. Female"
+            elif len(inputs) == 4:
+                if not validate_sex_selection(inputs[3]):
+                    response = "END Invalid selection for sex. Please restart."
+                else:
+                    region_menu = "\n".join([f"{key}. {REGIONS_DISTRICTS[key]['name']}" for key in REGIONS_DISTRICTS])
+                    response = f"CON Select Region of Birth:\n{region_menu}"
+            elif len(inputs) == 5:
+                region_selection = inputs[4]
+                if region_selection not in REGIONS_DISTRICTS:
+                    response = "END Invalid region selection. Please restart."
+                else:
+                    districts = REGIONS_DISTRICTS[region_selection]["districts"]
+                    district_menu = "\n".join([f"{i+1}. {d['name']}" for i, d in enumerate(districts)])
+                    response = f"CON Select District:\n{district_menu}"
+            elif len(inputs) == 6:
+                region_selection = inputs[4]
+                if region_selection not in REGIONS_DISTRICTS:
+                     response = "END Session error. Invalid region. Please restart."
+                else:
+                    districts = REGIONS_DISTRICTS[region_selection]["districts"]
+                    try:
+                        district_index = int(inputs[5]) - 1
+                        if not (0 <= district_index < len(districts)): raise ValueError
+                        response = "CON Enter Mother's Ghana Card Number (e.g. GHA-123456789-0)"
+                    except (ValueError, IndexError):
+                        response = "END Invalid district selection. Please restart."
+            elif len(inputs) == 7:
+                if not validate_nin(inputs[6]):
+                    response = "END Invalid Mother's Ghana Card Number. Please restart."
+                else:
+                    response = "CON Enter Father's Ghana Card Number (or enter 0 to skip)"
+            elif len(inputs) == 8:
+                if not validate_optional_nin(inputs[7]):
+                    response = "END Invalid Father's Ghana Card Number. Please restart."
+                else:
+                    child_name_raw, dob_raw, sex_code, region_sel, district_sel, mother_nin, father_nin_raw = inputs[1:8]
+                    child_name = "N/A" if child_name_raw == '0' else child_name_raw
+                    dob_display = f"{dob_raw[:2]}/{dob_raw[2:4]}/{dob_raw[4:]}"
+                    sex_display = "Male" if sex_code == '1' else "Female"
+                    region_name = REGIONS_DISTRICTS[region_sel]['name']
+                    district_name = REGIONS_DISTRICTS[region_sel]['districts'][int(district_sel)-1]['name']
+                    father_nin = "N/A" if father_nin_raw == '0' else father_nin_raw
 
-                    # --- PATH 1.1.2: YES Father Details ---
-                    elif add_father_choice == '1':
-                        if len(inputs) == 11:
-                            response = "CON Enter Father's Full Name"
-                        elif len(inputs) == 12:
-                            if not validate_name(inputs[11]): response = "END Invalid father's name. Please start again."
-                            else: response = "CON Enter Father's Ghana Card Number (e.g. GHA-123456789-0)"
-                        elif len(inputs) == 13: # Show confirmation
-                            if not validate_nin(inputs[12]): response = "END Invalid father's NIN. Please start again."
-                            else:
-                                _, _, dob_raw, sex_code, first_name, surname, mother_name, _, _, father_name = inputs[2:12]
-                                dob = f"{dob_raw[0:2]}/{dob_raw[2:4]}/{dob_raw[4:8]}"
-                                sex = "Male" if sex_code == "1" else "Female"
-                                summary = f"Please Confirm:\nName: {first_name} {surname}\nDOB: {dob}\nSex: {sex}\nMother: {mother_name}\nFather: {father_name}\n\n1. Confirm & Submit\n2. Cancel"
-                                response = f"CON {summary}"
-                        elif len(inputs) == 14: # Process submission
-                            if inputs[13] == '1':
-                                region_code_fmt = f"{int(inputs[2]):02d}"
-                                details = {
-                                    "baby_name": f"{inputs[6]} {inputs[7]}", "dob": f"{inputs[4][0:2]}/{inputs[4][2:4]}/{inputs[4][4:8]}",
-                                    "sex": "Male" if inputs[5] == "1" else "Female", "mother_name": inputs[8], "mother_nin": inputs[9],
-                                    "father_name": inputs[11], "father_nin": inputs[12],
-                                    "district_code": inputs[3], "region_code": region_code_fmt, "status": "Provisionally Registered"
-                                }
-                                ubrn = save_registration(details, region_code_fmt, inputs[3])
-                                sms_message = f"Congratulations! The birth of {details['baby_name']} is registered. Your UBRN is {ubrn}. Keep this safe."
-                                send_sms(phone_number, sms_message)
-                                response = "END Thank you! You will receive an SMS with the UBRN shortly."
-                            else:
-                                response = "END Registration cancelled. Thank you."
-
-            # --- PATH 1.2: Health Worker Flow ---
-            elif inputs[1] == "2":
-                if len(inputs) == 2:
-                    response = "CON Enter your 6-digit Health Worker ID."
-                elif len(inputs) == 3:
-                    if not validate_health_worker_id(inputs[2]): response = "END Invalid Health Worker ID. Please start again."
-                    else: 
-                        region_list = "1. G. Accra\n2. Ashanti\n3. Western\n4. Central\n5. Eastern\n6. Volta\n7. Northern\n8. U. East\n9. U. West\n10. Bono\n11. Bono E\n12. Ahafo\n13. W. North\n14. Oti\n15. N. East\n16. Savannah"
-                        response = f"CON Select the region of birth:\n{region_list}"
-                elif len(inputs) == 4:
-                    if not validate_region_selection(inputs[3]): response = "END Invalid region. Please start again."
-                    else: response = "CON Enter the 3-digit District Code"
-                elif len(inputs) == 5:
-                    if not validate_district_code(inputs[4]): response = "END Invalid district code. Please start again."
-                    else: response = "CON Enter baby's Date of Birth (DDMMYYYY)"
-                elif len(inputs) == 6:
-                    if not validate_date_of_birth(inputs[5]): response = "END Invalid date. Please start again."
-                    else: response = "CON Select baby's sex:\n1. Male\n2. Female"
-                elif len(inputs) == 7:
-                    if not validate_sex_selection(inputs[6]): response = "END Invalid sex selection. Please start again."
-                    else: response = "CON Enter baby's First Name(s)"
-                elif len(inputs) == 8:
-                    if not validate_name(inputs[7]): response = "END Invalid first name. Please start again."
-                    else: response = "CON Enter baby's Surname"
-                elif len(inputs) == 9:
-                    if not validate_name(inputs[8]): response = "END Invalid surname. Please start again."
-                    else: response = "CON Enter Mother's Full Name"
-                elif len(inputs) == 10:
-                    if not validate_name(inputs[9]): response = "END Invalid mother's name. Please start again."
-                    else: response = "CON Enter Mother's Ghana Card Number"
-                elif len(inputs) == 11:
-                    if not validate_nin(inputs[10]): response = "END Invalid mother's NIN. Please start again."
-                    else: response = "CON Enter Parent's 10-digit phone number for SMS"
-                elif len(inputs) == 12:
-                    if not validate_phone_number(inputs[11]): response = "END Invalid phone number. Please start again."
-                    else: response = "CON Add Father's Details?\n1. Yes\n2. No"
-
-                # --- Flow diverges here based on Father Details selection ---
-                elif len(inputs) >= 13:
-                    add_father_choice = inputs[12]
-                    if add_father_choice not in ['1', '2']:
-                        response = "END Invalid choice for father's details. Please start again."
-
-                    # --- PATH 1.2.1: NO Father Details ---
-                    elif add_father_choice == '2':
-                        if len(inputs) == 13: # Show confirmation
-                            hw_id, _, _, dob_raw, sex_code, first_name, surname, mother_name, _, parent_phone = inputs[2:12]
-                            dob = f"{dob_raw[0:2]}/{dob_raw[2:4]}/{dob_raw[4:8]}"
-                            sex = "Male" if sex_code == "1" else "Female"
-                            summary = f"Confirm for HW {hw_id}:\nName: {first_name} {surname}\nDOB: {dob}\nMother: {mother_name}\nSMS to: {parent_phone}\n1. Confirm\n2. Cancel"
-                            response = f"CON {summary}"
-                        elif len(inputs) == 14: # Process submission
-                            if inputs[13] == '1':
-                                region_code_fmt = f"{int(inputs[3]):02d}"
-                                details = {
-                                    "baby_name": f"{inputs[7]} {inputs[8]}", "dob": f"{inputs[5][0:2]}/{inputs[5][2:4]}/{inputs[5][4:8]}",
-                                    "sex": "Male" if inputs[6] == "1" else "Female", "mother_name": inputs[9], "mother_nin": inputs[10],
-                                    "district_code": inputs[4], "region_code": region_code_fmt, "status": "Provisionally Registered",
-                                    "registered_by": f"HW-{inputs[2]}"
-                                }
-                                ubrn = save_registration(details, region_code_fmt, inputs[4])
-                                sms_message = f"The birth of {details['baby_name']} has been registered by a health worker. Your UBRN is {ubrn}. Keep this safe."
-                                send_sms(inputs[11], sms_message)
-                                response = "END Registration submitted. An SMS will be sent to the parent's number."
-                            else:
-                                response = "END Registration cancelled. Thank you."
-
-                    # --- PATH 1.2.2: YES Father Details ---
-                    elif add_father_choice == '1':
-                        if len(inputs) == 13:
-                            response = "CON Enter Father's Full Name"
-                        elif len(inputs) == 14:
-                            if not validate_name(inputs[13]): response = "END Invalid father's name. Please start again."
-                            else: response = "CON Enter Father's Ghana Card Number"
-                        elif len(inputs) == 15: # Show confirmation
-                            if not validate_nin(inputs[14]): response = "END Invalid father's NIN. Please start again."
-                            else:
-                                hw_id, _, _, dob_raw, sex_code, first_name, surname, _, _, parent_phone, _, father_name = inputs[2:14]
-                                dob = f"{dob_raw[0:2]}/{dob_raw[2:4]}/{dob_raw[4:8]}"
-                                sex = "Male" if sex_code == "1" else "Female"
-                                summary = f"Confirm for HW {hw_id}:\nName: {first_name} {surname}\nDOB: {dob}\nFather: {father_name}\nSMS to: {parent_phone}\n1. Confirm\n2. Cancel"
-                                response = f"CON {summary}"
-                        elif len(inputs) == 16: # Process submission
-                            if inputs[15] == '1':
-                                region_code_fmt = f"{int(inputs[3]):02d}"
-                                details = {
-                                    "baby_name": f"{inputs[7]} {inputs[8]}", "dob": f"{inputs[5][0:2]}/{inputs[5][2:4]}/{inputs[5][4:8]}",
-                                    "sex": "Male" if inputs[6] == "1" else "Female", "mother_name": inputs[9], "mother_nin": inputs[10],
-                                    "father_name": inputs[13], "father_nin": inputs[14],
-                                    "district_code": inputs[4], "region_code": region_code_fmt, "status": "Provisionally Registered",
-                                    "registered_by": f"HW-{inputs[2]}"
-                                }
-                                ubrn = save_registration(details, region_code_fmt, inputs[4])
-                                sms_message = f"The birth of {details['baby_name']} has been registered by a health worker. Your UBRN is {ubrn}. Keep this safe."
-                                send_sms(inputs[11], sms_message)
-                                response = "END Registration submitted. An SMS will be sent to the parent's number."
-                            else:
-                                response = "END Registration cancelled. Thank you."
-            else:
-                response = "END Invalid role selection. Please try again."
-
+                    summary = (f"Confirm Details:\nName: {child_name}\nDOB: {dob_display}\nSex: {sex_display}\n"
+                               f"Region: {region_name}\nDistrict: {district_name}\nMother NIN: {mother_nin}\n"
+                               f"Father NIN: {father_nin}\n\n1. Confirm & Submit\n2. Cancel")
+                    response = f"CON {summary}"
+            elif len(inputs) == 9:
+                if inputs[8] == '1':
+                    region_code = REGIONS_DISTRICTS[inputs[4]]['code']
+                    district_code = REGIONS_DISTRICTS[inputs[4]]['districts'][int(inputs[5])-1]['code']
+                    details = {
+                        "baby_name": "N/A" if inputs[1] == '0' else inputs[1],
+                        "dob": f"{inputs[2][:2]}/{inputs[2][2:4]}/{inputs[2][4:]}",
+                        "sex": "Male" if inputs[3] == '1' else "Female",
+                        "region_code": region_code, "district_code": district_code,
+                        "mother_nin": inputs[6],
+                        "father_nin": "N/A" if inputs[7] == '0' else inputs[7],
+                        "status": "Provisionally Registered"
+                    }
+                    ubrn = save_registration(details)
+                    sms_message = (f"Congratulations! The birth of your child is provisionally registered. "
+                                   f"Your Unique Birth Registration Number is {ubrn}. Keep this safe.")
+                    send_sms(phone_number, sms_message)
+                    response = "END Thank you! You will receive an SMS with the UBRN shortly."
+                else:
+                    response = "END Registration cancelled. Thank you."
+        
         # ================== VERIFICATION FLOW (Option 2) ==================
         elif inputs[0] == "2":
             if len(inputs) == 1:
-                response = "CON Please enter the complete UBRN to verify (e.g., GHA-01-027-25210-0001-5)."
+                response = "CON Please enter the complete UBRN to verify (e.g., GHA-01-027-25213-0001-5)."
             elif len(inputs) == 2:
                 ubrn_to_check = inputs[1].strip()
                 if not validate_ubrn(ubrn_to_check):
@@ -361,30 +245,24 @@ def ussd_callback():
                     record = find_registration_by_ubrn(ubrn_to_check)
                     if record:
                         summary = f"Registration Found:\nName: {record['baby_name']}\nDOB: {record['dob']}\nStatus: {record['status']}"
+                        logging.info(f"VERIFICATION: Found record for UBRN '{ubrn_to_check}'.")
                         response = f"END {summary}"
                     else:
+                        logging.warning(f"VERIFICATION: No record found for UBRN '{ubrn_to_check}'.")
                         response = "END Registration Not Found. Please check the UBRN and try again."
 
-        # ================== HELP FLOW (Option 3) ==================
-        elif inputs[0] == "3":
-            if len(inputs) == 1:
-                response = "CON HELP MENU:\n1. About\n2. Cost\n3. Requirements\n4. Contact"
-            elif inputs[1] == "1":
-                response = "END This is the official Govt. of Ghana service to register births using your mobile phone for free."
-            elif inputs[1] == "2":
-                response = "END Registering via USSD is FREE. Fees for the printed certificate may apply at the Registry office."
-            elif inputs[1] == "3":
-                response = "END You need: Baby's name & DOB, Mother's full name & Ghana Card number. Father's details are optional."
-            elif inputs[1] == "4":
-                response = "END For help, please call the Births & Deaths Registry toll-free number: 0800-123-456 (Mon-Fri, 8am-5pm)."
         else:
             response = "END Invalid option. Please restart the process."
 
+        # Log the response being sent back to the USSD gateway
+        logging.info(f"Response sent - SessionID: {session_id}, Phone: {phone_number}, Response: '{response}'")
         return response
 
     except Exception as e:
-        print(f"ERROR in USSD callback: {str(e)}")
-        return "END System error occurred. Please try again later."
+        # Log the full exception traceback for debugging
+        logging.error(f"FATAL ERROR in USSD callback for SessionID {session_id}: {e}", exc_info=True)
+        # Provide a generic error to the user
+        return "END A system error occurred. Please try again later."
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8000, debug=True)
